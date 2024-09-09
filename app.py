@@ -1,12 +1,14 @@
 from pathlib import Path
 import pandas as pd
+import re
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 import altair as alt
 import folium
-from folium.plugins import HeatMap
+import json
+#from folium.plugins import HeatMap
 from shiny import reactive
 from shiny.express import render,input,ui
 from shinywidgets import render_plotly,render_altair,render_widget
@@ -74,6 +76,7 @@ def dat():
     df['hour'] = df['order_date'].dt.hour
     df['day'] = df['order_date'].dt.day_name()
     df['value'] = df['quantity_ordered']*df['price_each']
+    df['state'] = df['city'].apply(lambda x: re.findall(r'\((.*?)\)', x)[0])
     return df
    
 #GENERAL LAYOUT OF THE DASHBOARD
@@ -217,12 +220,41 @@ with ui.layout_column_wrap(width=1/2):
 with ui.card():
     ui.card_header("Sales by Location")
     @render.ui
-    def plot_us_heatmap():
+    def plot_us_map():
         df = dat()
         
-        heatmap_data = df[['lat','long','quantity_ordered']].values
-        map = folium.Map(location=[37.09,-95.71],zoom_start=4.3)
-        HeatMap(heatmap_data).add_to(map)
+        with open('data/us-states.json', 'r') as usjson:
+            us_states = json.load(usjson)
+        
+        df_states = df.groupby('state')['quantity_ordered'].sum().reset_index()
+        
+        df_cities = df.groupby('city').agg({'quantity_ordered':'sum','lat': 'mean', 'long': 'mean'}).reset_index()
+        
+        map = folium.Map(location=[37.0902, -95.7129],zoom_start=4)
+        
+        ## Adding markers to the cities
+        
+        for i in range(len(df_cities)):
+            folium.Marker(
+                location=[df_cities.iloc[i,2],df_cities.iloc[i,3]],
+                tooltip=df_cities.iloc[i,0],
+                popup=f"Total orders: {df_cities.iloc[i,1]}",
+                icon=folium.Icon(color="blue")
+            ).add_to(map)
+        
+        ## Adding Choropleth map of states
+        
+        folium.Choropleth(
+            geo_data=us_states,
+            data=df_states,
+            columns=["state", "quantity_ordered"],
+            key_on="feature.id",
+            fill_color="YlOrRd",
+            fill_opacity=0.8,
+            line_opacity=0.3,
+            nan_fill_color="white",
+            legend_name="Total orders per state",
+        ).add_to(map)  
         
         return map
         
